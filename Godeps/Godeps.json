@@ -2054,6 +2054,10 @@
 			"Rev": "0c5108395e2debce0d731cf0287ddf7242066aba"
 		},
 		{
+			"ImportPath": "github.com/googlecloudplatform/k8s-cloud-provider",
+			"Rev": "941d4818d40988b0e53c93c95baabebcf65c8b58"
+		},
+		{
 			"ImportPath": "github.com/gophercloud/gophercloud",
 			"Rev": "781450b3c4fcb4f5182bcc5133adb4b2e4a09d1d"
 		},
