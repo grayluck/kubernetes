@@ -116,6 +116,10 @@
 			"Rev": "c02ca9a983da5807ddf7d796784928f5be4afd09"
 		},
 		{
+			"ImportPath": "github.com/GoogleCloudPlatform/k8s-cloud-provider/pkg/cloud",
+			"Rev": "941d4818d40988b0e53c93c95baabebcf65c8b58"
+		},
+		{
 			"ImportPath": "github.com/JeffAshton/win_pdh",
 			"Rev": "76bb4ee9f0ab50f77826f2a2ee7fb9d3880d6ec2"
 		},
