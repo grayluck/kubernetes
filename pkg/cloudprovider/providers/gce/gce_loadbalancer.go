@@ -23,10 +23,14 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/golang/glog"
 
+	compute "google.golang.org/api/compute/v1"
 	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/cloudprovider"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud"
 	netsets "k8s.io/kubernetes/pkg/util/net/sets"
@@ -37,8 +41,15 @@ type cidrs struct {
 	isSet bool
 }
 
+const (
+	// gceLBHealthCheckReconcileInterval = 1 * time.Minute
+	gceLBHealthCheckReconcileInterval = 10 * time.Second
+)
+
 var (
-	lbSrcRngsFlag cidrs
+	lbSrcRngsFlag                  cidrs
+	lbHealthCheckReconcilerCreated bool
+	lbHealthCheckReconcilerLock    sync.Mutex
 )
 
 func init() {
@@ -113,6 +124,12 @@ func (gce *GCECloud) EnsureLoadBalancer(ctx context.Context, clusterName string,
 	if err != nil {
 		return nil, err
 	}
+
+	lbHealthCheckReconcilerLock.Lock()
+	if !lbHealthCheckReconcilerCreated {
+		go gce.ensureLoadBalancerHealthChecksInterval(clusterName, clusterID)
+	}
+	lbHealthCheckReconcilerLock.Unlock()
 
 	glog.V(4).Infof("EnsureLoadBalancer(%v, %v, %v, %v, %v): ensure %v loadbalancer", clusterName, svc.Namespace, svc.Name, loadBalancerName, gce.region, desiredScheme)
 
@@ -201,4 +218,77 @@ func getSvcScheme(svc *v1.Service) cloud.LbScheme {
 		return cloud.SchemeInternal
 	}
 	return cloud.SchemeExternal
+}
+
+func (gce *GCECloud) ensureHealthCheckInterval(hc *compute.HealthCheck) {
+	if hc == nil {
+		return
+	}
+	glog.Warningf(">>>>>>>>>>> [ensureHealthCheckInterval] hc.Name = %q", hc.Name)
+	if hc.CheckIntervalSec != gceHcCheckIntervalSeconds {
+		glog.V(2).Infof("ensureHealthCheckInterval(): updating health check %q.CheckIntervalSec from %ds to %ds", hc.Name, hc.CheckIntervalSec, gceHcCheckIntervalSeconds)
+		hc.CheckIntervalSec = gceHcCheckIntervalSeconds
+		gce.UpdateHealthCheck(hc)
+	}
+}
+
+func (gce *GCECloud) ensureHTTPHealthCheckInterval(hc *compute.HttpHealthCheck) {
+	if hc == nil {
+		return
+	}
+	glog.Warningf(">>>>>>>>>>> [ensureHTTPHealthCheckInterval] hc.Name = %q", hc.Name)
+	if hc.CheckIntervalSec != gceHcCheckIntervalSeconds {
+		glog.V(2).Infof("ensureHTTPHealthCheckInterval(): updating HTTP health check %q.CheckIntervalSec from %ds to %ds", hc.Name, hc.CheckIntervalSec, gceHcCheckIntervalSeconds)
+		hc.CheckIntervalSec = gceHcCheckIntervalSeconds
+		gce.UpdateHttpHealthCheck(hc)
+	}
+}
+
+// ensureLoadBalancerHealthChecksInterval is a go routine that reconcile the
+// interval of the health checks for the load balancer.
+func (gce *GCECloud) ensureLoadBalancerHealthChecksInterval(clusterName, clusterID string) {
+	glog.Warningf(">>>>>>>>>>> [ensureLoadBalancerHealthChecksInterval] go routine is up")
+	for {
+		time.Sleep(gceLBHealthCheckReconcileInterval)
+		glog.Warningf(">>>>>>>>>>> [ensureLoadBalancerHealthChecksInterval] Event triggered")
+		hcMap := map[string]*compute.HealthCheck{}
+		hcList, err := gce.ListHealthChecks()
+		if err != nil {
+			glog.Warningf("gce.ListHealthChecks(): failed to list health checks. err: %v", err)
+			continue
+		}
+		for _, hc := range hcList {
+			hcMap[hc.Name] = hc
+		}
+
+		httpHcMap := map[string]*compute.HttpHealthCheck{}
+		httpHcList, err := gce.ListHttpHealthChecks()
+		if err != nil {
+			glog.Warningf("gce.ListHttpHealthChecks(): failed to list HTTP health checks. err: %v", err)
+			continue
+		}
+		for _, hc := range httpHcList {
+			httpHcMap[hc.Name] = hc
+		}
+		nodeHcName := makeHealthCheckName("", clusterID, true /* shared */)
+		nodeHttpHcName := MakeNodesHealthCheckName(clusterID)
+		gce.ensureHealthCheckInterval(hcMap[nodeHcName])
+		gce.ensureHTTPHealthCheckInterval(httpHcMap[nodeHttpHcName])
+
+		glog.Warningf(">>>>>>>>>>> [watch] nodeHcName = %s", nodeHcName)
+		glog.Warningf(">>>>>>>>>>> [watch] nodeHttpHcName = %s", nodeHttpHcName)
+
+		client := gce.client
+		svcList, err := client.CoreV1().Services(metav1.NamespaceAll).List(metav1.ListOptions{})
+		for _, svc := range svcList.Items {
+			lbName := gce.GetLoadBalancerName(context.TODO(), clusterName, &svc)
+			switch getSvcScheme(&svc) {
+			case cloud.SchemeInternal:
+				hc := hcMap[makeHealthCheckName(lbName, clusterID, false)]
+				gce.ensureHealthCheckInterval(hc)
+			default:
+				gce.ensureHTTPHealthCheckInterval(httpHcMap[lbName])
+			}
+		}
+	}
 }
