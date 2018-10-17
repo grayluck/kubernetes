@@ -35,6 +35,7 @@ import (
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	"k8s.io/kubernetes/pkg/cloudprovider"
+	gcecloud "k8s.io/kubernetes/pkg/cloudprovider/providers/gce"
 	"k8s.io/kubernetes/pkg/controller/endpoint"
 	"k8s.io/kubernetes/test/e2e/framework"
 	imageutils "k8s.io/kubernetes/test/utils/image"
@@ -1354,6 +1355,83 @@ var _ = SIGDescribe("Services", func() {
 	It("should only allow access from service loadbalancer source ranges [Slow]", func() {
 		// this feature currently supported only on GCE/GKE/AWS
 		framework.SkipUnlessProviderIs("gce", "gke", "aws")
+
+		loadBalancerLagTimeout := framework.LoadBalancerLagTimeoutDefault
+		loadBalancerCreateTimeout := framework.LoadBalancerCreateTimeoutDefault
+		if nodes := framework.GetReadySchedulableNodesOrDie(cs); len(nodes.Items) > framework.LargeClusterMinNodesNumber {
+			loadBalancerCreateTimeout = framework.LoadBalancerCreateTimeoutLarge
+		}
+
+		namespace := f.Namespace.Name
+		serviceName := "lb-sourcerange"
+		jig := framework.NewServiceTestJig(cs, serviceName)
+
+		By("Prepare allow source ips")
+		// prepare the exec pods
+		// acceptPod are allowed to access the loadbalancer
+		acceptPodName := framework.CreateExecPodOrFail(cs, namespace, "execpod-accept", nil)
+		dropPodName := framework.CreateExecPodOrFail(cs, namespace, "execpod-drop", nil)
+
+		acceptPod, err := cs.CoreV1().Pods(namespace).Get(acceptPodName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		dropPod, err := cs.CoreV1().Pods(namespace).Get(dropPodName, metav1.GetOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		By("creating a pod to be part of the service " + serviceName)
+		// This container is an nginx container listening on port 80
+		// See kubernetes/contrib/ingress/echoheaders/nginx.conf for content of response
+		jig.RunOrFail(namespace, nil)
+		// Create loadbalancer service with source range from node[0] and podAccept
+		svc := jig.CreateTCPServiceOrFail(namespace, func(svc *v1.Service) {
+			svc.Spec.Type = v1.ServiceTypeLoadBalancer
+			svc.Spec.LoadBalancerSourceRanges = []string{acceptPod.Status.PodIP + "/32"}
+		})
+
+		// Clean up loadbalancer service
+		defer func() {
+			jig.UpdateServiceOrFail(svc.Namespace, svc.Name, func(svc *v1.Service) {
+				svc.Spec.Type = v1.ServiceTypeNodePort
+				svc.Spec.LoadBalancerSourceRanges = nil
+			})
+			Expect(cs.CoreV1().Services(svc.Namespace).Delete(svc.Name, nil)).NotTo(HaveOccurred())
+		}()
+
+		svc = jig.WaitForLoadBalancerOrFail(namespace, serviceName, loadBalancerCreateTimeout)
+		jig.SanityCheckService(svc, v1.ServiceTypeLoadBalancer)
+
+		// timeout when we haven't just created the load balancer
+		normalReachabilityTimeout := 2 * time.Minute
+
+		By("check reachability from different sources")
+		svcIP := framework.GetIngressPoint(&svc.Status.LoadBalancer.Ingress[0])
+		// Wait longer as this is our first request after creation.  We can't check using a separate method,
+		// because the LB should only be reachable from the "accept" pod
+		framework.CheckReachabilityFromPod(true, loadBalancerLagTimeout, namespace, acceptPodName, svcIP)
+		framework.CheckReachabilityFromPod(false, normalReachabilityTimeout, namespace, dropPodName, svcIP)
+
+		By("Update service LoadBalancerSourceRange and check reachability")
+		jig.UpdateServiceOrFail(svc.Namespace, svc.Name, func(svc *v1.Service) {
+			// only allow access from dropPod
+			svc.Spec.LoadBalancerSourceRanges = []string{dropPod.Status.PodIP + "/32"}
+		})
+		framework.CheckReachabilityFromPod(false, normalReachabilityTimeout, namespace, acceptPodName, svcIP)
+		framework.CheckReachabilityFromPod(true, normalReachabilityTimeout, namespace, dropPodName, svcIP)
+
+		By("Delete LoadBalancerSourceRange field and check reachability")
+		jig.UpdateServiceOrFail(svc.Namespace, svc.Name, func(svc *v1.Service) {
+			svc.Spec.LoadBalancerSourceRanges = nil
+		})
+		framework.CheckReachabilityFromPod(true, normalReachabilityTimeout, namespace, acceptPodName, svcIP)
+		framework.CheckReachabilityFromPod(true, normalReachabilityTimeout, namespace, dropPodName, svcIP)
+	})
+
+	It("should reconcile LB health check intervals [Slow]", func() {
+		// the test is designed for clusters on GCE/GKE
+		framework.SkipUnlessProviderIs("gce", "gke")
+		gceCloud, err := framework.GetGCECloud()
+		if err != nil {
+			framework.Failf("Failed to get gceCloud")
+		}
 
 		loadBalancerLagTimeout := framework.LoadBalancerLagTimeoutDefault
 		if framework.ProviderIs("aws") {
