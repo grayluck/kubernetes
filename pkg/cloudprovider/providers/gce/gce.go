@@ -80,8 +80,10 @@ const (
 	maxTargetPoolCreateInstances = 200
 
 	// HTTP Load Balancer parameters
+
+	// GceHcCheckIntervalSeconds is the interval in seconds for health check.
 	// Configure 5 second period for external health checks.
-	gceHcCheckIntervalSeconds = int64(5)
+	GceHcCheckIntervalSeconds = int64(5)
 	gceHcTimeoutSeconds       = int64(1)
 	// Start sending requests as soon as a pod is found on the node.
 	gceHcHealthyThreshold = int64(1)

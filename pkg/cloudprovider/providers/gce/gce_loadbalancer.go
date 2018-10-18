@@ -42,8 +42,11 @@ type cidrs struct {
 }
 
 const (
-	// gceLBHealthCheckReconcileInterval = 1 * time.Minute
-	gceLBHealthCheckReconcileInterval = 10 * time.Second
+	// GceLBHealthCheckReconcileInterval is the reconcile interval for the go
+	// routine to check if the health check has the right checkInterval.
+	// GceLBHealthCheckReconcileInterval = 1 * time.Minute
+	// DO NOT SUBMIT use 1 minute instead. 10s for test.
+	GceLBHealthCheckReconcileInterval = 10 * time.Second
 )
 
 var (
@@ -228,7 +231,9 @@ func (gce *GCECloud) ensureHealthCheckInterval(hc *compute.HealthCheck) {
 	if hc.CheckIntervalSec != gceHcCheckIntervalSeconds {
 		glog.V(2).Infof("ensureHealthCheckInterval(): updating health check %q.CheckIntervalSec from %ds to %ds", hc.Name, hc.CheckIntervalSec, gceHcCheckIntervalSeconds)
 		hc.CheckIntervalSec = gceHcCheckIntervalSeconds
-		gce.UpdateHealthCheck(hc)
+		if err := gce.UpdateHealthCheck(hc); err != nil {
+			glog.Warningf("gce.UpdateHealthCheck(hc): failed to update health check %q: %v", hc.Name, err)
+		}
 	}
 }
 
@@ -240,7 +245,9 @@ func (gce *GCECloud) ensureHTTPHealthCheckInterval(hc *compute.HttpHealthCheck) 
 	if hc.CheckIntervalSec != gceHcCheckIntervalSeconds {
 		glog.V(2).Infof("ensureHTTPHealthCheckInterval(): updating HTTP health check %q.CheckIntervalSec from %ds to %ds", hc.Name, hc.CheckIntervalSec, gceHcCheckIntervalSeconds)
 		hc.CheckIntervalSec = gceHcCheckIntervalSeconds
-		gce.UpdateHttpHealthCheck(hc)
+		if err := gce.UpdateHttpHealthCheck(hc); err != nil {
+			glog.Warningf("gce.UpdateHttpHealthCheck(hc): failed to update HTTP health check %q: %v", hc.Name, err)
+		}
 	}
 }
 
