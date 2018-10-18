@@ -1439,9 +1439,6 @@ var _ = SIGDescribe("Services", func() {
 
 		loadBalancerLagTimeout := framework.LoadBalancerLagTimeoutDefault
 		loadBalancerCreateTimeout := framework.LoadBalancerCreateTimeoutDefault
-		if nodes := framework.GetReadySchedulableNodesOrDie(cs); len(nodes.Items) > framework.LargeClusterMinNodesNumber {
-			loadBalancerCreateTimeout = framework.LoadBalancerCreateTimeoutLarge
-		}
 
 		namespace := f.Namespace.Name
 		serviceName := "lb-hc-int"
