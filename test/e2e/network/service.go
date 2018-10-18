@@ -1425,7 +1425,15 @@ var _ = SIGDescribe("Services", func() {
 		framework.CheckReachabilityFromPod(true, normalReachabilityTimeout, namespace, dropPodName, svcIP)
 	})
 
+	// This test creates a load balancer, make sure its health check interval
+	// equals to gceHcCheckIntervalSeconds. Then the interval is manipulated
+	// to be something else, see if the interval will be reconciled.
 	It("should reconcile LB health check interval [Slow]", func() {
+		const (
+			gceHcCheckIntervalSeconds         = int64(5)
+			gceLBHealthCheckReconcileInterval = 60
+		)
+
 		// This test is for clusters on GCE/GKE.
 		framework.SkipUnlessProviderIs("gce", "gke")
 		clusterID, err := framework.GetClusterID(cs)
@@ -1437,14 +1445,11 @@ var _ = SIGDescribe("Services", func() {
 			framework.Failf("framework.GetGCECloud() = _, %v; want nil", err)
 		}
 
-		loadBalancerLagTimeout := framework.LoadBalancerLagTimeoutDefault
-		loadBalancerCreateTimeout := framework.LoadBalancerCreateTimeoutDefault
-
 		namespace := f.Namespace.Name
 		serviceName := "lb-hc-int"
 		jig := framework.NewServiceTestJig(cs, serviceName)
 
-		By(">>>>>>> NEED WORK")
+		By("create load balancer service")
 		// Create loadbalancer service with source range from node[0] and podAccept
 		svc := jig.CreateTCPServiceOrFail(namespace, func(svc *v1.Service) {
 			svc.Spec.Type = v1.ServiceTypeLoadBalancer
@@ -1458,30 +1463,33 @@ var _ = SIGDescribe("Services", func() {
 			Expect(cs.CoreV1().Services(svc.Namespace).Delete(svc.Name, nil)).NotTo(HaveOccurred())
 		}()
 
-		svc = jig.WaitForLoadBalancerOrFail(namespace, serviceName, loadBalancerCreateTimeout)
+		svc = jig.WaitForLoadBalancerOrFail(namespace, serviceName, framework.LoadBalancerCreateTimeoutDefault)
 
 		hcName := gcecloud.MakeNodesHealthCheckName(clusterID)
 		hc, err := gceCloud.GetHttpHealthCheck(hcName)
 		if err != nil {
 			framework.Failf("gceCloud.GetHttpHealthCheck(%q) = _, %v; want nil", hcName, err)
 		}
-		Expect(hc.CheckIntervalSec).To(Equal(gcecloud.GceHcCheckIntervalSeconds))
-		hc.CheckIntervalSec = 10 * time.Second
-		if err = gcecloud.UpdateHttpHealthCheck(hc); err != nil {
+		Expect(hc.CheckIntervalSec).To(Equal(gceHcCheckIntervalSeconds))
+
+		By("check if health check interval is reconciled")
+		hc.CheckIntervalSec = 2 * gceHcCheckIntervalSeconds
+		if err = gceCloud.UpdateHttpHealthCheck(hc); err != nil {
 			framework.Failf("gcecloud.UpdateHttpHealthCheck(%#v) = %v; want nil")
 		}
 
 		pollInterval := framework.Poll * 10
-		if pollErr := wait.PollImmediate(pollInterval, gcecloud.GceLBHealthCheckReconcileInterval*2, func() (bool, error) {
+		pollTimeout := gceLBHealthCheckReconcileInterval * 2 * time.Second
+		if pollErr := wait.PollImmediate(pollInterval, pollTimeout, func() (bool, error) {
 			hc, err := gceCloud.GetHttpHealthCheck(hcName)
 			if err != nil {
 				framework.Logf("Failed to get HttpHealthCheck(%q): %v", hcName, err)
 				return false, err
 			}
 			framework.Logf("hc.CheckIntervalSec = %v", hc.CheckIntervalSec)
-			return hc.CheckIntervalSec == gcecloud.GceHcCheckIntervalSeconds, nil
+			return hc.CheckIntervalSec == gceHcCheckIntervalSeconds, nil
 		}); pollErr != nil {
-			framework.Failf("Health check %q does not reconcile its check interval to %d.", hcName, gcecloud.GceHcCheckIntervalSeconds)
+			framework.Failf("Health check %q does not reconcile its check interval to %d.", hcName, gceHcCheckIntervalSeconds)
 		}
 	})
 

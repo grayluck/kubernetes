@@ -42,11 +42,11 @@ type cidrs struct {
 }
 
 const (
-	// GceLBHealthCheckReconcileInterval is the reconcile interval for the go
+	// gceLBHealthCheckReconcileInterval is the reconcile interval for the go
 	// routine to check if the health check has the right checkInterval.
-	// GceLBHealthCheckReconcileInterval = 1 * time.Minute
+	// gceLBHealthCheckReconcileInterval = 1 * time.Minute
 	// DO NOT SUBMIT use 1 minute instead. 10s for test.
-	GceLBHealthCheckReconcileInterval = 10 * time.Second
+	gceLBHealthCheckReconcileInterval = 10 * time.Second
 )
 
 var (

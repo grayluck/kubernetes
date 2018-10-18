@@ -169,3 +169,33 @@ func TestEnsureLoadBalancerDeletedDeletesInternalLb(t *testing.T) {
 	assert.NoError(t, err)
 	assertInternalLbResourcesDeleted(t, gce, apiService, vals, true)
 }
+
+func TestEnsureLoadBalancerHealthChecksInterval(t *testing.T) {
+	t.Parallel()
+
+	hcKey := meta.GlobalKey("hc")
+	httpHcKey := meta.GlobalKey("httpHc")
+
+	vals := DefaultTestClusterValues()
+	gce, err := fakeGCECloud(vals)
+	require.NoError(t, err)
+
+	apiService := fakeLoadbalancerService("")
+
+	// When a loadbalancer has not been created
+	status, found, err := gce.GetLoadBalancer(context.Background(), vals.ClusterName, apiService)
+	assert.Nil(t, status)
+	assert.False(t, found)
+	assert.Nil(t, err)
+
+	nodeNames := []string{"test-node-1"}
+	nodes, err := createAndInsertNodes(gce, nodeNames, vals.ZoneName)
+	require.NoError(t, err)
+	expectedStatus, err := gce.EnsureLoadBalancer(context.Background(), vals.ClusterName, apiService, nodes)
+	require.NoError(t, err)
+
+	status, found, err = gce.GetLoadBalancer(context.Background(), vals.ClusterName, apiService)
+	assert.Equal(t, expectedStatus, status)
+	assert.True(t, found)
+	assert.Nil(t, err)
+}
